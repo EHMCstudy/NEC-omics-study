@@ -1,0 +1,96 @@
+### Single-Cell RNA-seq Data Preprocessing - Perform preprocessing, integration, and dimensionality reduction on single-cell RNA-seq data for NEC analysis.
+
+# Install required packages if not already installed
+required_packages <- c("Seurat", "dplyr", "Hmisc", "ggplot2", "purrr")
+
+# Install missing packages
+install.packages(setdiff(required_packages, rownames(installed.packages())))
+
+# Load the packages
+library(Seurat)       # For single-cell RNA-seq analysis
+library(dplyr)        # For data manipulation
+library(Hmisc)        # For correlation functions
+library(ggplot2)      # For plotting
+library(purrr)        # For functional programming utilities
+
+# Setup: Initialize variables and load necessary libraries
+data.dir <- "~/Desktop/Data_Analysis/scRNAseq/data/CellRanger/"
+scRNA_list = list()  # List to store Seurat objects
+doublets = list()    # List to store doublet predictions
+
+# Define cell cycle gene sets for Seurat CellCycleScoring
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+# List of samples to process
+List_scRNA_Sample <- c("Control_P8", "Control_P8_2", "Control_P8_3", "NEC_P8", "NEC_P8_2", "NEC_P8_3", 
+                         "NEC_Indole_1", "NEC_Indole_2", "NEC_Kyn_1", "ABT_NEC_P8")
+
+# Read data and preprocess each sample
+for (i in List_scRNA_Sample) {
+  # Read data
+  x = Read10X(data.dir = paste0(data.dir, i))
+  scRNA_list[[i]] <- CreateSeuratObject(counts = x, min.cells = 5, min.features = 200, project = i)
+
+  # Preprocessing - remove doublets
+  doublets[[i]] <- read.table(paste0(data.dir, i, "/doublet.txt"), header = T, row.names = 1, sep = ',') %>%
+    as.data.frame() %>%
+    mutate(predicted_doublets = if_else(doublet_scores >= 0.2, "T", "F")) %>%
+    rename(Score = doublet_scores, Doublet = predicted_doublets)
+  
+  # Update Seurat object with doublet info
+  scRNA_list[[i]]@meta.data$Doublet <- doublets[[i]]$Doublet
+  scRNA_list[[i]] <- subset(scRNA_list[[i]], subset = (Doublet == "F"))
+
+  # Preprocessing - remove low-quality cells based on features and mitochondrial percentage
+  scRNA_list[[i]][["percent.mt"]] <- PercentageFeatureSet(scRNA_list[[i]], pattern = "^mt-")
+  VlnPlot(scRNA_list[[i]], features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+  
+  # Filter cells based on nFeature_RNA and percent.mt
+  scRNA_list[[i]] <- subset(scRNA_list[[i]], subset = nFeature_RNA > 500 & nFeature_RNA < 7000 & percent.mt < 15)
+}
+
+# Merge Seurat objects from different samples
+merged_NEC_AhR <- merge(x = scRNA_list$NEC_P8, 
+                        y = list(scRNA_list$Control_P8, scRNA_list$NEC_P8_2, scRNA_list$ABT_NEC_P8, 
+                                 scRNA_list$Control_P8_2, scRNA_list$Control_P8_3, scRNA_list$NEC_P8_3, 
+                                 scRNA_list$NEC_Indole_1, scRNA_list$NEC_Indole_2, scRNA_list$NEC_Kyn_1))
+
+# Integration using SCTransform (Seurat v5) with regression of confounding variables
+merged_NEC_AhR <- SCTransform(merged_NEC_AhR, method = "glmGamPoi", ncells = 6000, 
+                              vars.to.regress = c("percent.mt", 'nFeature_RNA', 'nCount_RNA'), verbose = FALSE)
+
+# Apply Cell Cycle Scoring
+merged_NEC_AhR <- CellCycleScoring(object = merged_NEC_AhR, s.features = s.genes, g2m.features = g2m.genes, 
+                                   assay = 'SCT', set.ident = TRUE)
+
+# SCTransform again to adjust for cell cycle scores and other confounding variables
+merged_NEC_AhR <- SCTransform(merged_NEC_AhR, assay = 'RNA', method = "glmGamPoi",
+                              vars.to.regress = c('percent.mt', 'nFeature_RNA', 'nCount_RNA', 'S.Score', 'G2M.Score'))
+
+# PCA and integration
+merged_NEC_AhR <- RunPCA(merged_NEC_AhR, npcs = 30, verbose = FALSE)
+
+# Perform integration of multiple datasets
+merged_NEC_AhR <- IntegrateLayers(object = merged_NEC_AhR, orig.reduction = "pca", normalization.method = "SCT", 
+                                  method = "RPCA", new.reduction = "integrated.SCT", verbose = FALSE)
+
+# Add metadata (sample group and batch information)
+merged_NEC_AhR@meta.data <- merged_NEC_AhR@meta.data %>%
+  mutate(Sample = orig.ident,
+         Group = case_when(
+           Group %in% c("NEC_P8", "NEC_P8_2", "NEC_P8_3") ~ "NEC_P8",
+           Group %in% c("Control_P8", "Control_P8_2", "Control_P8_3") ~ "Control_P8",
+           Group %in% c("NEC_Indole_1", "NEC_Indole_2") ~ "NEC_Indoles",
+           Group == "NEC_Kyn_1" ~ "NEC_Kyn",
+           TRUE ~ Group),
+         Group_AhR = ifelse(Group %in% c("NEC_Kyn", "NEC_Indole"), "NEC_AhR", "Other"))
+
+# UMAP for dimensionality reduction and clustering
+merged_NEC_AhR <- RunUMAP(merged_NEC_AhR, reduction = "integrated.SCT", dims = 1:30)
+merged_NEC_AhR <- FindNeighbors(merged_NEC_AhR, reduction = "integrated.SCT", dims = 1:30)
+merged_NEC_AhR <- FindClusters(merged_NEC_AhR, resolution = 0.3)
+
+# Store sample and cell type metadata
+merged_NEC_AhR$Sample <- merged_NEC_AhR$orig.ident
+merged_NEC_AhR$celltype <- merged_NEC_AhR$seurat_clusters
