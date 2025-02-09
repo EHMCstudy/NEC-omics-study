@@ -166,3 +166,156 @@ for (i in levels.TP[-1]) {
 FB_NEC_match_Calprotectin_combined <- FB_NEC_match_Calprotectin_combined %>%
   mutate(TP_Calprotectin.match = factor(TP_Calprotectin.match, levels = levels.TP)) %>%
   select(ID.seq, ID.seq_NEC.match, Group.NEC.ID_sci, TP_Calprotectin.match, everything())
+
+
+
+
+# Scripts below show the post-match differences between groups analyzed for Calprotectin, microbiome, and antibiotic use levels. This method is also applicable to microbiome and metabolomics analysis of samples, as well as between controls and stage Ib NEC.
+
+## Matched data final preparation
+TP_NEC_match_Calprotectin_combined <- FB_NEC_match_Calprotectin_combined %>%
+  mutate(Group = "Postnatal age") %>%
+  rename(TP = TP_Calprotectin.match, Days = DOL) %>%
+  select(TP, Days, Group, Group.NEC.ID) %>%
+  rbind(
+    FB_NEC_match_Calprotectin_combined %>%
+      mutate(Group = "Antibiotic use") %>%
+      rename(TP = TP_Calprotectin.match, Days = Ab_days) %>%
+      select(TP, Days, Group, Group.NEC.ID)
+  ) %>%
+  filter(!is.na(TP)) %>%
+  mutate(
+    Group.NEC.ID = as.character(Group.NEC.ID),
+    Group.NEC.ID = replace(Group.NEC.ID, Group.NEC.ID == "NEC", "confirmed NEC"),
+    Group.NEC.ID = replace(Group.NEC.ID, Group.NEC.ID == "NEC?", "stage Ib NEC"),
+    Group.NEC.ID = factor(Group.NEC.ID, levels = c("Controls", "confirmed NEC", "stage Ib NEC")),
+    Group = factor(Group, levels = c("Postnatal age", "Antibiotic use"))
+  )
+
+# Test differences between groups
+comp_NEC_TP_DOL <- TP_NEC_match_Calprotectin_combined %>%
+  filter(!is.na(Days)) %>%
+  group_by(Group, TP) %>%
+  wilcox_test(Days ~ Group.NEC.ID, ref.group = "Controls", p.adjust.method = "none") %>%
+  add_xy_position(x = "TP", dodge = 0.8, scales = "free") %>%
+  mutate(
+    p.signif_label = case_when(
+      p <= 0.0001 ~ "****",
+      p <= 0.001 ~ "***",
+      p <= 0.01 ~ "**",
+      p <= 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  )
+
+# Boxplot visualization for days vs TP across groups
+(FB_NEC_match_Calprotectin_days <- TP_NEC_match_Calprotectin_combined %>%
+  ggplot(aes(TP, Days)) +
+  geom_boxplot(aes(fill = Group.NEC.ID, color = Group.NEC.ID), outlier.size = 0.2, alpha = 0.8) +
+  scale_color_manual(values = Color_Group.NEC_sci) +
+  scale_fill_manual(values = Color_Group.NEC_sci) +
+  theme_classic() +
+  theme(
+    legend.position = "none", axis.title.x = element_blank(),
+    axis.title = element_text(color = "black"), axis.title.y = element_text(color = "black"),
+    axis.text = element_text(color = "black"), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  stat_pvalue_manual(comp_NEC_TP_DOL, x = "TP", label = "p.signif_label", hide.ns = F, tip.length = 0, bracket.nudge.y = -2, y.position = 85) +
+  facet_wrap(~Group, ncol = 2))
+
+ggsave("FB_NEC_match_Calprotectin_days.pdf", width = 3.3, height = 2.4)
+
+# Postnatal age and antibiotic use visualization for Calprotectin
+(FB_NEC_match_Calprotectin_meta <- FB_NEC_match_Calprotectin_combined %>%
+  mutate(Group = "Postnatal age") %>%
+  rename(TP = TP_Calprotectin.match, Days = DOL) %>%
+  select(TP, Days, Group, Group.NEC.ID) %>%
+  rbind(
+    FB_NEC_match_Calprotectin_combined %>%
+      mutate(Group = "Antibiotic use") %>%
+      rename(TP = TP_Calprotectin.match, Days = Ab_days) %>%
+      select(TP, Days, Group, Group.NEC.ID)
+  ) %>%
+  filter(!is.na(TP)) %>%
+  mutate(TP = factor(TP, levels = levels.TP), Group = factor(Group, levels = c("Postnatal age", "Antibiotic use"))) %>%
+  ggplot(aes(TP, Days, color = Group.NEC.ID, fill = Group.NEC.ID)) +
+  geom_boxplot(outlier.size = 0.2, alpha = 0.8) +
+  ylab("Days") +
+  facet_wrap(~Group) +
+  scale_color_manual(values = c("#265A70", "red4", "goldenrod4")) +
+  scale_fill_manual(values = c("#265A70", "red4", "goldenrod4")) +
+  theme_classic() +
+  theme(
+    legend.position = "none", axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  ))
+
+ggsave("FB_NEC_match_Calprotectin_DOL_Ab_days.pdf", width = 3.3, height = 2.4)
+
+# Microbiome visualization for Calprotectin and antibiotic use
+(FB_NEC_match_micro_meta <- FB_NEC_match_micro_combined %>%
+  mutate(Group = "Postnatal age") %>%
+  rename(TP = TP_micro.match, Days = DOL) %>%
+  select(TP, Days, Group, Group.NEC.ID) %>%
+  rbind(
+    FB_NEC_match_micro_combined %>%
+      mutate(Group = "Antibiotic use") %>%
+      rename(TP = TP_micro.match, Days = Ab_days) %>%
+      select(TP, Days, Group, Group.NEC.ID)
+  ) %>%
+  filter(!is.na(TP)) %>%
+  mutate(TP = factor(TP, levels = levels.TP), Group = factor(Group, levels = c("Postnatal age", "Antibiotic use"))) %>%
+  ggplot(aes(TP, Days, color = Group.NEC.ID, fill = Group.NEC.ID)) +
+  geom_boxplot(outlier.size = 0.2, alpha = 0.8) +
+  ylab("Days") +
+  facet_wrap(~Group) +
+  scale_color_manual(values = c("#265A70", "red4", "goldenrod4")) +
+  scale_fill_manual(values = c("#265A70", "red4", "goldenrod4")) +
+  theme_classic() +
+  theme(
+    legend.position = "none", axis.title.x = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  ))
+
+ggsave("FB_NEC_match_micro_DOL_Ab_days.pdf", width = 3.3, height = 2.4)
+
+
+
+# post-match differences between groups (age & accumulated antibiotic use)
+TP_NEC_match_Calprotectin_combined <- FB_NEC_match_Calprotectin_combined %>% 
+  mutate(Group = "Postnatal age") %>% 
+  rename(TP = TP_Calprotectin.match,
+         Days = DOL) %>% 
+  select(TP, Days, Group, Group.NEC.ID) %>% 
+  rbind(FB_NEC_match_Calprotectin_combined %>% 
+              mutate(Group = "Antibiotic use") %>% 
+  rename(TP = TP_Calprotectin.match,
+         Days = Ab_days) %>% 
+    select(TP, Days, Group, Group.NEC.ID)) %>% 
+  filter(!is.na(TP)) %>% 
+  mutate(Group.NEC.ID = factor(Group.NEC.ID, 
+           levels = c("Controls", "confirmed NEC")),
+         Group = factor(Group, levels = c("Postnatal age", "Antibiotic use")))
+
+comp_NEC_TP_DOL <- TP_NEC_match_Calprotectin_combined %>% 
+  filter(!is.na(Days)) %>% 
+  group_by(Group, TP) %>%
+  wilcox_test(Days ~ Group.NEC.ID, ref.group = "Controls", p.adjust.method = "none") %>% 
+  add_xy_position(x = "TP", dodge = 0.8, scales = "free") %>% 
+  # mutate(Group = factor(Group, levels = (List.NEC_dominant.Group))) %>% 
+    mutate(p.signif_label = case_when(p <= 0.0001 ~ "****", p <= 0.001 ~ "***", p <= 0.01 ~ "**", p <= 0.05 ~ "*", TRUE ~ "ns"))
+
+(FB_NEC_match_Calprotectin_days <- TP_NEC_match_Calprotectin_combined %>% 
+  ggplot(aes(TP, Days)) +
+    geom_boxplot(aes(fill = Group.NEC.ID, color = Group.NEC.ID), outlier.size = 0.2, alpha=0.8) +
+    theme_classic() +
+    theme(legend.position = "none", axis.title.x = element_blank(), 
+          axis.title=element_text(color = "black"), axis.title.y=element_text(color = "black"), 
+          axis.text = element_text(color = "black"), 
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    stat_pvalue_manual(comp_NEC_TP_DOL, x = "TP",
+                     label = "p.signif_label",
+                     hide.ns = F, tip.length = 0, 
+                     bracket.nudge.y = -2, y.position = 85) +
+    facet_wrap(~Group, ncol = 2))
+ggsave("FB_NEC_match_Calprotectin_days.pdf", width = 3.3, height = 2.4)
