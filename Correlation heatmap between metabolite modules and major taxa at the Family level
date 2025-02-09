@@ -1,0 +1,73 @@
+# Correlation heatmap between metabolite modules and major taxa at the Family level.
+
+# Install required packages if not already installed
+required_packages <- c("dplyr", "Hmisc", "DESeq2", "ggplot2", "pheatmap", "WGCNA", "corrplot", "purrr")
+
+# Install missing packages
+install.packages(setdiff(required_packages, rownames(installed.packages())))
+
+# Load the packages
+library(dplyr)        # For data manipulation
+library(Hmisc)        # For correlation and statistical tests (rcorr)
+library(DESeq2)       # For DESeq2 normalization
+library(ggplot2)      # For plotting
+library(pheatmap)     # For heatmap generation
+library(WGCNA)        # For WGCNA analysis
+library(corrplot)     # For correlation plot
+library(purrr)        # For functional programming utilities
+
+# Metadata: Assign tables
+NEC_alpha.table_old <- Family.table_ps0.qPCR_NEC_log10
+NEC_module.table <- MEs %>% rownames_to_column("ID.seq")
+
+# Matrix for correlation and p-values calculation
+NEC_testRes_Cor.table <- NEC_alpha.table_old %>% 
+  left_join(NEC_module.table) %>%
+  select(-ID.seq) %>% 
+  filter(!is.na(MEred)) %>% 
+  cor.mtest(conf.level = 0.95, method = "spearman", use = "complete.obs")
+
+# Adjust p-values for multiple comparisons (FDR correction)
+NEC_testRes_Cor.table_p.adj <- NEC_testRes_Cor.table$p %>% 
+  as.matrix() %>% 
+  as.vector() %>% 
+  p.adjust(method = 'fdr') %>% 
+  matrix(ncol = ncol(NEC_testRes_Cor.table$p))
+
+# Assign row and column names after p-value adjustment
+colnames(NEC_testRes_Cor.table_p.adj) <- colnames(NEC_testRes_Cor.table$p)
+rownames(NEC_testRes_Cor.table_p.adj) <- rownames(NEC_testRes_Cor.table$p)
+
+# Compute the correlation matrix
+NEC_corRes_Cor.table <- NEC_alpha.table_old %>% 
+  left_join(NEC_module.table) %>%
+  select(-ID.seq) %>% 
+  as.matrix() %>% 
+  cor(method = "spearman", use = "complete.obs")
+
+# Shortened matrices for visualization
+r.matrix_short <- NEC_corRes_Cor.table[colnames(NEC_module.table)[-c(1, 13)], colnames(NEC_alpha.table_old)[-1]]
+p.matrix_short <- NEC_testRes_Cor.table_p.adj[colnames(NEC_module.table)[-c(1, 13)], colnames(NEC_alpha.table_old)[-1]]
+
+# Clean row names for visualization
+rownames(r.matrix_short) <- gsub("ME", "", rownames(r.matrix_short))
+rownames(p.matrix_short) <- gsub("ME", "", rownames(p.matrix_short))
+
+# Generate Corrplot for full matrix
+pdf(file = "Corrplot_NEC_module_Family_old.pdf", width = 15, height = 15)
+NEC_corrplot_module_old <- corrplot(NEC_corRes_Cor.table, p.mat = NEC_testRes_Cor.table_p.adj,
+                                    method = 'color', type = 'full', 
+                                    insig = 'blank', col = rev(colorRampPalette(c("red4", "white", "blue4"))(200)),
+                                    tl.cex = 1, number.cex = 1, tl.pos = "d", tl.col = "black", 
+                                    addCoef.col = 'white', diag = FALSE)
+dev.off()
+
+# Generate Corrplot for shortened matrix
+pdf(file = "Corrplot_NEC_module_Family_short.pdf", width = 6.5, height = 2.2)
+NEC_corrplot_module_old_short <- corrplot(t(r.matrix_short), p.mat = t(p.matrix_short),
+                                          method = 'color', type = 'full', 
+                                          insig = 'blank', col = rev(colorRampPalette(c("red4", "white", "blue4"))(200)),
+                                          tl.cex = 0.7, number.cex = 0.6, tl.pos = "lt", 
+                                          tl.col = "black", addCoef.col = 'white') +
+  theme(axis.text = element_text(color = "black"))
+dev.off()
