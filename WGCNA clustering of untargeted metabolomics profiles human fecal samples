@@ -1,0 +1,118 @@
+
+### WGCNA clustering of untargeted metabolomics profiles of all non-meconial samples to identify key metabolite modules for confirmed NEC.
+
+# Load libraries
+library(WGCNA)        # WGCNA for network analysis
+library(reshape2)     # For reshaping data
+library(stringr)      # For string manipulation
+library(Hmisc)        # For correlation computation
+library(DESeq2)       # For DESeq2 normalization
+library(pheatmap)     # For heatmaps
+library(ggplot2)      # For plotting
+library(purrr)        # For functional utilities
+
+# Initialize for custom correlation function
+cors <- function(df) {
+   M <- Hmisc::rcorr(as.matrix(df), type = "spearman")
+   Mdf <- map(M, ~ data.frame(.x))
+   return(Mdf)
+}
+
+# Set options
+options(digits = 2)
+
+### Part 1: Create Data and Normalize ###
+options(stringsAsFactors = FALSE)
+enableWGCNAThreads()
+
+# Prepare the data
+FB_HMDB.combined_Group.NEC.ID.matrix.t <- FB_HMDB.combined.Quantile_all %>%
+  left_join(FB_NEC_final_meta_non.meconium %>% select(ID.seq, Group.NEC.ID)) %>%
+  filter(!is.na(Group.NEC.ID)) %>%
+  select(-Group.NEC.ID) %>%
+  arrange(ID.seq) %>%
+  column_to_rownames("ID.seq") %>%
+  t() %>%
+  as.matrix()
+
+# Create DESeqDataSet and expression matrix
+dataExpr_deseq <- DESeqDataSetFromMatrix(countData = round(FB_HMDB.combined_Group.NEC.ID.matrix.t), 
+                                          colData = FB_NEC_final_meta_non.meconium, ~ Group.NEC.ID)
+
+# Normalizing expression matrix
+datExpr <- t(FB_HMDB.combined_Group.NEC.ID.matrix.t)
+
+# Check data structure
+head(datExpr[1:5, 1:5])
+
+### Part 2: Sample Clustering ###
+# Calculate sample distance and perform hierarchical clustering
+sampleTree = hclust(dist(datExpr), method = "average")
+
+# Plot sample clustering
+par(cex = 1.3, mar = c(0, 4, 2, 0))
+plot(sampleTree, main = "Sample Clustering to Detect Outliers", sub = "", xlab = "", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2)
+
+# Prepare clinical trait data for visualization
+datTraits <- FB_NEC_final_meta_non.meconium %>%
+  filter(Analysis %in% c("meta", "omics")) %>%
+  filter(!is.na(Group.NEC.ID)) %>%
+  select(ID.seq, DOL, FI, Feed.sum_ID, GA, BW, DeliveryMode, Gender) %>%
+  column_to_rownames("ID.seq") %>%
+  mutate(FI = as.numeric(as.factor(FI)),
+         Gender = as.numeric(as.factor(Gender)),
+         Feed.sum_ID = as.numeric(as.factor(Feed.sum_ID)),
+         DeliveryMode = as.numeric(as.factor(DeliveryMode)))
+
+# Convert traits to color representation
+traitColors = numbers2colors(datTraits, signed = FALSE)
+
+# Visualize sample clustering and clinical traits
+plotDendroAndColors(sampleTree, traitColors, groupLabels = names(datTraits), main = "Sample Dendrogram and Trait Heatmap")
+
+### Part 3: WGCNA Network Construction ###
+# Choose soft threshold powers for the network
+powers = c(1:20, seq(from = 22, to = 30, by = 2))
+sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 5)
+
+# Plot soft threshold results
+par(mfrow = c(1, 2))
+sft_list2 <- as.data.frame(cbind(sft$fitIndices[,1], sft$fitIndices[,5]))
+ggplot(sft_list2, aes(V1, V2)) + 
+  geom_point() +
+  xlab("Soft Threshold (power)") + 
+  ylab("Mean Connectivity") +
+  theme_classic()
+
+# Set power for network construction
+power = sft$powerEstimate
+
+# Run WGCNA to construct network modules
+net = blockwiseModules(datExpr, power = power, TOMType = "unsigned", minModuleSize = 30, 
+                       reassignThreshold = 1e-4, mergeCutHeight = 0.4, minKMEtoStay = 0.25, 
+                       numericLabels = TRUE, pamRespectsDendro = FALSE, corType = "bicor", 
+                       maxPOutliers = 0.05, verbose = 3)
+
+# Plot dendrogram of modules
+dynamicColors = labels2colors(net$colors)
+pdf(file = "module_tree_blockwise_final.pdf", width = 8, height = 5)
+module_tree_blockwise_final <- plotDendroAndColors(net$dendrograms[[1]], dynamicColors[net$blockGenes[[1]]], 
+                                                  "Module Colors", dendroLabels = FALSE, hang = 0.03, addGuide = TRUE, guideHang = 0.05)
+
+# Calculate eigengenes for each module
+MEList = moduleEigengenes(datExpr, colors = dynamicColors)
+MEs = MEList$eigengenes
+
+# Calculate dissimilarity of module eigengenes and cluster them
+MEDiss = 1 - cor(MEs)
+METree = hclust(as.dist(MEDiss), method = "average")
+pdf(file = "module_eigengenes_cluster.pdf", width = 8, height = 5)
+plot(METree, main = "Clustering of Module Eigengenes", xlab = "", sub = "")
+
+# Merge similar modules based on dissimilarity threshold
+MEDissThres = 0.2
+merge = mergeCloseModules(datExpr, dynamicColors, cutHeight = MEDissThres, verbose = 3)
+
+# Merged module colors and eigengenes
+mergedColors = merge$colors
+mergedMEs = merge$newMEs
