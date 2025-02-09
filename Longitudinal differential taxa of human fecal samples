@@ -1,0 +1,94 @@
+#### # Scripts below show the longitudinal difference of dominant taxa (Family and Genus level) of matched samples between controls and confirmed NEC. This method is also applied to samples between controls and stage Ib NEC.
+
+# Family-level analysis
+Family.table_ps0_NEC.qPCR_TP.long <- FB_NEC_match_micro_combined %>%
+  select(ID.seq, Group.NEC.ID, TP_micro.match) %>%
+  left_join(Family.table_ps0.qPCR_NEC, by = "ID.seq") %>%
+  filter(!is.na(TP_micro.match)) %>%
+  pivot_longer(cols = -(ID.seq:TP_micro.match), names_to = "Family", values_to = "Load") %>%
+  mutate(TP_micro.match = factor(TP_micro.match, levels = levels.TP), Load = Load + 1)
+
+# qPCR-adjusted statistical test for Family-level data
+comp_NEC_TP_micro.match_Family <- Family.table_ps0_NEC.qPCR_TP.long %>%
+  mutate(Group.NEC.ID = recode(Group.NEC.ID, NEC = "confirmed NEC", "NEC?" = "stage Ib NEC"),
+         Group.NEC.ID = factor(Group.NEC.ID, levels = c("Controls", "confirmed NEC", "stage Ib NEC"))) %>%
+  filter(!is.na(Load)) %>%
+  group_by(Family, TP_micro.match) %>%
+  wilcox_test(Load ~ Group.NEC.ID, ref.group = "Controls", p.adjust.method = "none") %>%
+  add_xy_position(x = "TP_micro.match", dodge = 0.8, scales = "free") %>%
+  mutate(p.signif_label = case_when(p <= 0.0001 ~ "****", p <= 0.001 ~ "***", p <= 0.01 ~ "**", p <= 0.05 ~ "*", TRUE ~ "ns"))
+
+# Family-level barplot
+GM.Barplot.Family_TP <- Family.table_ps0_NEC.qPCR_TP.long %>%
+  filter(!(Family %in% c("Veillonellaceae", "Bifidobacteriaceae") & TP_micro.match == "T.meconium")) %>%
+  mutate(Family = factor(Family, levels = List.NEC_dominant.Family)) %>%
+  rename(Group = Group.NEC.ID) %>%
+  ggplot(aes(TP_micro.match, Load)) +
+  geom_boxplot(aes(fill = Group, color = Group), outlier.size = 0.2, alpha = 0.8) +
+  ylab("Abundance (copies/gram of feces)") +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x), labels = trans_format("log10", math_format(10^.x)), limits = c(NA, 1e13)) +
+  theme_classic() +
+  theme(legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  stat_pvalue_manual(comp_NEC_TP_micro.match_Family, x = "TP_micro.match", label = "p.signif_label", hide.ns = FALSE, tip.length = 0, bracket.nudge.y = -2, y.position = 10^12) +
+  facet_wrap(~Family, ncol = 2)
+
+ggsave("GM.Barplot.Family_TP.pdf", GM.Barplot.Family_TP, width = 6, height = 5.5)
+
+# Genus-level analysis
+Genus.table_ps0_NEC.qPCR_TP.long <- FB_NEC_match_micro_combined %>% 
+  select(ID.seq, Group.NEC.ID, TP_micro.match) %>%
+  left_join(Genus.table_ps0.qPCR_NEC, by = "ID.seq") %>%
+  filter(!is.na(TP_micro.match)) %>%
+  pivot_longer(cols = -(ID.seq:TP_micro.match), names_to = "Genus", values_to = "Load") %>%
+  mutate(TP_micro.match = factor(TP_micro.match, levels = levels.TP),
+         Load = Load + 1) # data processing before log-transformation
+
+# qPCR-adjusted statistical test for Genus-level data
+comp_NEC_TP_micro.match_Genus <- Genus.table_ps0_NEC.qPCR_TP.long %>%
+  filter(TP_micro.match != "T.meconium") %>%
+  group_by(Genus, TP_micro.match) %>%
+  wilcox_test(Load ~ Group.NEC.ID, ref.group = "Controls", p.adjust.method = "none") %>%
+  add_xy_position(x = "TP_micro.match", dodge = 0.8, scales = "free") %>%
+  mutate(p.signif_label = case_when(p <= 0.0001 ~ "****", p <= 0.001 ~ "***", p <= 0.01 ~ "**", p <= 0.05 ~ "*", TRUE ~ "ns"))
+
+# Genus-level barplot with p-value annotations
+GM.Barplot.Genus_TP_NEC.T <- Genus.table_ps0_NEC.qPCR_TP.long %>%
+  ggplot(aes(TP_micro.match, Load)) +
+  geom_boxplot(aes(fill = Group.NEC.ID, color = Group.NEC.ID), outlier.size = 0.2, alpha = 0.8) +
+  ylab("Inferred abundance (copies/gram of feces)") +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x), labels = trans_format("log10", math_format(10^.x)), limits = c(NA, 1e13)) +
+  theme_classic() +
+  theme(legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  stat_pvalue_manual(comp_NEC_TP_micro.match_Genus, x = "TP_micro.match", label = "p.signif_label", hide.ns = FALSE, tip.length = 0, bracket.nudge.y = -2, y.position = 10^11.5) +
+  facet_wrap(~Genus, ncol = 2)
+
+ggsave("GM.Barplot.Genus_TP_NEC.T.pdf", GM.Barplot.Genus_TP_NEC.T, width = 6.5, height = 6)
+
+# Genus key-level analysis for Klebsiella and Escherichia_Shigella
+comp_NEC_TP_micro.match_Genus_key <- Genus.table_ps0_NEC.qPCR_TP.long %>%
+  filter(Genus %in% c("Klebsiella", "Escherichia_Shigella")) %>%
+  filter(!is.na(Load)) %>%
+  group_by(Genus, TP_micro.match) %>%
+  wilcox_test(Load ~ Group.NEC.ID, ref.group = "Controls", p.adjust.method = "none") %>%
+  add_xy_position(x = "TP_micro.match", dodge = 0.8, scales = "free") %>%
+  mutate(p.signif_label = case_when(p <= 0.0001 ~ "****", p <= 0.001 ~ "***", p <= 0.01 ~ "**", p <= 0.05 ~ "*", TRUE ~ "ns"))
+
+# Genus key-level barplot for Klebsiella and Escherichia_Shigella
+GM.Barplot.Genus_key_TP_NEC.T <- Genus.table_ps0_NEC.qPCR_TP.long %>%
+  filter(Genus %in% c("Klebsiella", "Escherichia_Shigella")) %>%
+  ggplot(aes(TP_micro.match, Load)) +
+  geom_boxplot(aes(fill = Group.NEC.ID, color = Group.NEC.ID), outlier.size = 0.2, alpha = 0.8) +
+  ylab("Abundance") +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x), labels = trans_format("log10", math_format(10^.x)), limits = c(NA, 1e13)) +
+  theme_classic() +
+  theme(legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  stat_pvalue_manual(comp_NEC_TP_micro.match_Genus_key, x = "TP_micro.match", label = "p.signif_label", hide.ns = FALSE, tip.length = 0, bracket.nudge.y = -2, y.position = 10^11.5) +
+  facet_wrap(~Genus, ncol = 2)
+
+ggsave("GM.Barplot.Genus_Key_TP_NEC.T.pdf", GM.Barplot.Genus_key_TP_NEC.T, width = 5.5, height = 1.8)
+
+# Combined Family and Genus plots
+(GM.Barplot.Family_TP / GM.Barplot.Genus_key_TP_NEC.T) +
+  plot_layout(heights = c(4.5, 1))
+
+ggsave("GM.Barplot.Family_Genus_TP.pdf", width = 5.5, height = 6.5)
