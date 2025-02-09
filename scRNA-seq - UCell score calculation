@@ -1,0 +1,86 @@
+```{r}
+# This section of the code performs Gene Set Enrichment Analysis (GSEA) using the irGSEA method to assess the activation of various gene sets within single-cell RNA-seq data.
+# The code integrates the results for different "Types" in the dataset and compares enrichment across groups such as "NEC_P8" vs "Control_P8".
+# The analysis uses multiple methods for GSEA scoring (UCell), calculates enrichment scores, and integrates the results into the Seurat object.
+# This method is also applied to other group-wise comparisons (of mouse and human datasets).
+
+# Load necessary libraries
+library(Seurat)
+library(dplyr)
+library(irGSEA)
+
+# Set the maximum number of ranks for AUCell (can be adjusted based on your data)
+aucell.MaxRank = 2000  # Example value, adjust based on your data and needs
+
+# Perform irGSEA on the merged Seurat object
+merged_NEC_AhR <- irGSEA.score(object = merged_NEC_AhR, 
+                               assay = "RNA", 
+                               seeds = 123, 
+                               ncores = 1, 
+                               min.cells = 3, 
+                               min.feature = 0,
+                               custom = F, 
+                               geneset = NULL, 
+                               msigdb = TRUE, 
+                               species = "Mus musculus", 
+                               category = "H", subcategory = NULL,
+                             # Other gene sets used: 
+                             # 1.category = "C2", subcategory = "CP:BIOCARTA"
+                             # 2.category = "C2", subcategory = "CP:REACTOME"
+                               geneid = "symbol",
+                               method = c("UCell"), 
+                               kcdf = 'Gaussian')
+
+# Integrate irGSEA results by group (e.g., "Group" column in the metadata)
+result.irGSEA_Type <- irGSEA.integrate(object = merged_NEC_AhR, 
+                                       group.by = "Group",
+                                       metadata = NULL, 
+                                       col.name = NULL,
+                                       method = c("UCell"))  # Choose the method for GSEA
+
+# Store UCell results in the list
+result.irGSEA_Type_Ucell_Group.compare <- result.irGSEA_Type$UCell %>% 
+  mutate(Type = "All")  # Add "Type" column for labeling purposes
+
+# Fetch relevant metadata and features from the Seurat object
+fetch_df <- FetchData(object = merged_NEC_AhR, 
+                      layer = "counts", 
+                      vars = c("Group", "nFeature_singscore", "nCount_singscore"))
+
+# Loop through each unique "Type" in the dataset and perform irGSEA for each subset of data
+for (i in unique(merged_NEC_AhR$Type)) {
+  # Subset Seurat object by Type and perform irGSEA for each subset
+  merged_NEC_AhR_subset <- irGSEA.score(object = merged_NEC_AhR %>% 
+                                          subset(Type == i), 
+                                        assay = "RNA", 
+                                        seeds = 123, 
+                                        ncores = 1,
+                                        min.cells = 3, 
+                                        min.feature = 0,
+                                        custom = FALSE, 
+                                        geneset = NULL, 
+                                        msigdb = TRUE, 
+                                        species = "Mus musculus", 
+                                        category = "H",  subcategory = NULL, 
+                                        geneid = "symbol",
+                                        method = c("UCell"),
+                             # Other gene sets used: 
+                             # 1.category = "C2", subcategory = "CP:BIOCARTA"
+                             # 2.category = "C2", subcategory = "CP:REACTOME"
+                                        aucell.MaxRank = 1000, 
+                                        ucell.MaxRank = NULL, 
+                                        kcdf = 'Gaussian')
+  
+  # Integrate the irGSEA results by group for the subset data
+  result.irGSEA_Type_subset <- irGSEA.integrate(object = merged_NEC_AhR_subset, 
+                                               group.by = "Group",
+                                               metadata = NULL, 
+                                               col.name = NULL,
+                                               method = c("UCell"))
+  
+  # Combine results from the subset with the main irGSEA results
+  result.irGSEA_Type_Ucell <- result.irGSEA_Type_Ucell %>% 
+    rbind(result.irGSEA_Type$Ucell %>% mutate(Type = i))
+}
+
+# The code now integrates the results from all "Type" subsets and stores the results for further analysis or visualization.
