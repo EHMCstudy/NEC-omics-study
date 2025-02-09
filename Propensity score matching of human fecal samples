@@ -1,0 +1,168 @@
+
+## # Scripts below show the PSM matching of samples analyzed for calprotectin level between controls and confirmed NEC. This method is also applied to samples from microbiome and metabolomics analyses, as well as samples between controls and stage Ib NEC.
+
+# Environment preparation: Install and load required packages
+
+# Install packages (uncomment the lines below if not installed yet)
+# install.packages(c("dplyr", "MatchIt", "tableone", "knitr", "writexl"))
+
+# Load required libraries
+library(dplyr)        # Data manipulation
+library(MatchIt)      # Matching method for PSM
+library(tableone)     # CreateTableOne function for descriptive statistics
+library(knitr)        # For nice printing of tables
+library(writexl)      # For writing data to Excel files
+
+# Preprocess the data - set time point names
+FB_NEC_Sample.unmatch_Calprotectin_all <- FB_NEC_final %>%
+  filter(!is.na(Calprotectin)) %>% 
+  filter(Group.NEC.ID != "Stage Ib NEC" & !grepl("Stage Ib NEC", TP_NEC, fixed = TRUE)) %>%
+  mutate(
+    TP_Calprotectin.match = case_when(
+      DOL <= 3 ~ "T.meconium",
+      TP_NEC == "NEC" ~ "T.NEC",
+      TP_NEC == "NEC.pre2" ~ "T.pre2",
+      TP_NEC == "NEC.pre" ~ "T.pre",
+      TP_NEC == "NEC.post2" ~ "T.post2",
+      TP_NEC == "NEC.post" ~ "T.post",
+      TRUE ~ as.character(TP_NEC)
+    )
+  )
+
+levels.TP <- c("T.meconium", "T.pre2", "T.pre", "T.NEC", "T.post", "T.post2")
+
+# Initialize list for storing matched data
+List_FB_NEC_match_Calprotectin_TP <- list()
+
+# Matching for "T.meconium" group
+FB_NEC_Sample.unmatch_Calprotectin <- FB_NEC_Sample.unmatch_Calprotectin_all %>%
+  filter(DOL <= 3 | Group.NEC.ID == "Controls")
+
+# Perform optimal matching
+data_match.optimal <- matchit(
+  Group.NEC.ID ~ DOL + GA + BW + Gender + DeliveryMode + Apgar5 + Breastmilk_days + Ab_prenatal + Ab_days + Probiotics_days,
+  data = FB_NEC_Sample.unmatch_Calprotectin, 
+  method = "optimal", 
+  ratio = 2
+)
+
+# Extract matched data
+df.match.ID.NEC <- match.data(data_match.optimal) %>%
+  distinct(ID.seq) %>%
+  select(ID.seq) %>%
+  mutate(Group_NEC_match_Calprotectin = Group.NEC.ID)
+
+FB_NEC_match_Calprotectin_raw_TP <- FB_NEC_Sample.unmatch_Calprotectin %>%
+  filter(ID.seq %in% df.match.ID.NEC$ID.seq) %>%
+  mutate(Group_NEC_match_Calprotectin = Group.NEC.ID)
+
+# Process the matching matrix for group assignment
+match.matrix_NEC <- data_match.optimal$match.matrix %>% as.data.frame()
+match.matrix_NEC_ID.seq <- data.frame(matrix(ncol = 3, nrow = 0), stringsAsFactors = FALSE)
+colnames(match.matrix_NEC_ID.seq) <- c("ID.seq", "Group", "Group_ID.seq")
+
+# Loop to create matched group sequences
+for (i in rownames(match.matrix_NEC)) {
+  m1 <- match.matrix_NEC[i, 1]
+  m2 <- match.matrix_NEC[i, 2]
+  
+  Group_ID.seq <- c(
+    FB_NEC_Sample.unmatch_Calprotectin[i,]$ID.seq,
+    FB_NEC_Sample.unmatch_Calprotectin[m1,]$ID.seq,
+    FB_NEC_Sample.unmatch_Calprotectin[m2,]$ID.seq
+  )
+  
+  names(Group_ID.seq) <- c("NEC", rep("controls", 2))
+  match.matrix_NEC_ID.seq <- rbind(match.matrix_NEC_ID.seq, Group_ID.seq)
+}
+
+# Convert to long format
+match.matrix_NEC_Group_ID.seq <- match.matrix_NEC_ID.seq %>%
+  pivot_longer(-ID.seq_NEC.match, names_to = "Controls", values_to = "ID.seq") %>%
+  select(-Controls)
+
+# Combine matched data for "T.meconium"
+FB_NEC_match_Calprotectin_TP <- match.matrix_NEC_Group_ID.seq %>%
+  rbind(FB_NEC_match_Calprotectin_raw_TP %>%
+          filter(!is.na(Day.to.NEC)) %>%
+          select(ID.seq) %>%
+          mutate(ID.seq_NEC.match = ID.seq)) %>%
+  left_join(
+    FB_NEC_Sample.unmatch_Calprotectin %>%
+      filter(!is.na(Day.to.NEC)) %>%
+      select(ID.seq, TP_Calprotectin.match, Day.to.NEC) %>%
+      rename(ID.seq_NEC.match = ID.seq)
+  ) %>%
+  left_join(FB_NEC_Sample.unmatch_Calprotectin %>% select(-TP_Calprotectin.match, -Day.to.NEC)) %>%
+  select(ID.seq, ID.seq_NEC.match, Group.NEC.ID, TP_Calprotectin.match, everything())
+
+List_FB_NEC_match_Calprotectin_TP[["T.meconium"]] <- FB_NEC_match_Calprotectin_TP
+FB_NEC_match_Calprotectin_combined <- FB_NEC_match_Calprotectin_TP
+
+# Matching for other groups (non-meconium)
+for (i in levels.TP[-1]) {
+  FB_NEC_Sample.unmatch_Calprotectin <- FB_NEC_Sample.unmatch_Calprotectin_all %>%
+    filter(DOL > 3 | Group.NEC.ID == "Controls")
+
+  data_match.optimal <- matchit(
+    Group.NEC.ID ~ DOL + GA + BW + Gender + DeliveryMode + Apgar5 + Breastmilk_days + Ab_prenatal + Ab_days + Probiotics_days,
+    data = FB_NEC_Sample.unmatch_Calprotectin, 
+    method = "optimal", 
+    ratio = 2
+  )
+
+  df.match.ID.NEC <- match.data(data_match.optimal) %>%
+    distinct(ID.seq) %>%
+    select(ID.seq) %>%
+    mutate(Group_NEC_match_Calprotectin = Group.NEC.ID)
+
+  FB_NEC_match_Calprotectin_raw_TP <- FB_NEC_Sample.unmatch_Calprotectin %>%
+    filter(ID.seq %in% df.match.ID.NEC$ID.seq) %>%
+    mutate(Group_NEC_match_Calprotectin = Group.NEC.ID)
+  
+  # Process the matching matrix for other groups
+  match.matrix_NEC <- data_match.optimal$match.matrix %>% as.data.frame()
+  match.matrix_NEC_ID.seq <- data.frame(matrix(ncol = 3, nrow = 0), stringsAsFactors = FALSE)
+  colnames(match.matrix_NEC_ID.seq) <- c("ID.seq", "Group", "Group_ID.seq")
+
+  for (i in rownames(match.matrix_NEC)) {
+    m1 <- match.matrix_NEC[i, 1]
+    m2 <- match.matrix_NEC[i, 2]
+    
+    Group_ID.seq <- c(
+      FB_NEC_Sample.unmatch_Calprotectin[i,]$ID.seq,
+      FB_NEC_Sample.unmatch_Calprotectin[m1,]$ID.seq,
+      FB_NEC_Sample.unmatch_Calprotectin[m2,]$ID.seq
+    )
+
+    names(Group_ID.seq) <- c("NEC", rep("controls", 2))
+    match.matrix_NEC_ID.seq <- rbind(match.matrix_NEC_ID.seq, Group_ID.seq)
+  }
+
+  match.matrix_NEC_Group_ID.seq <- match.matrix_NEC_ID.seq %>%
+    pivot_longer(-ID.seq_NEC.match, names_to = "Controls", values_to = "ID.seq") %>%
+    select(-Controls)
+
+  # Combine matched data for each group
+  FB_NEC_match_Calprotectin_TP <- match.matrix_NEC_Group_ID.seq %>%
+    rbind(FB_NEC_match_Calprotectin_raw_TP %>%
+            filter(!is.na(Day.to.NEC)) %>%
+            select(ID.seq) %>%
+            mutate(ID.seq_NEC.match = ID.seq)) %>%
+    left_join(
+      FB_NEC_Sample.unmatch_Calprotectin %>%
+        filter(!is.na(Day.to.NEC)) %>%
+        select(ID.seq, TP_Calprotectin.match, Day.to.NEC) %>%
+        rename(ID.seq_NEC.match = ID.seq)
+    ) %>%
+    left_join(FB_NEC_Sample.unmatch_Calprotectin %>% select(-TP_Calprotectin.match, -Day.to.NEC)) %>%
+    select(ID.seq, ID.seq_NEC.match, Group.NEC.ID, TP_Calprotectin.match, everything())
+
+  List_FB_NEC_match_Calprotectin_TP[[i]] <- FB_NEC_match_Calprotectin_TP
+  FB_NEC_match_Calprotectin_combined <- rbind(FB_NEC_match_Calprotectin_combined, FB_NEC_match_Calprotectin_TP)
+}
+
+# Final combined data with matching results
+FB_NEC_match_Calprotectin_combined <- FB_NEC_match_Calprotectin_combined %>%
+  mutate(TP_Calprotectin.match = factor(TP_Calprotectin.match, levels = levels.TP)) %>%
+  select(ID.seq, ID.seq_NEC.match, Group.NEC.ID_sci, TP_Calprotectin.match, everything())
