@@ -1,0 +1,101 @@
+### Scripts below show the longitudinal distribution (PCA plots) difference (PERMANOVA) of fecal metabolome profiles of matched samples between controls and confirmed NEC. This method is also applied to samples between controls and stage Ib NEC.
+
+# Install required packages if not already installed
+required_packages <- c("dplyr", "tidyr", "vegan", "ggplot2", "ggpubr", "forcats", "readxl")
+
+# Install any missing packages
+install.packages(setdiff(required_packages, rownames(installed.packages())))
+
+# Load the packages
+library(dplyr)      # For data manipulation
+library(tidyr)      # For reshaping data (pivot_longer)
+library(vegan)      # For vegdist and PERMANOVA (adonis2)
+library(ggplot2)    # For plotting
+library(ggpubr)     # For stat_ellipse and ggscatter
+library(forcats)    # For handling factor levels
+library(readxl)     # For reading Excel files
+
+
+# Initialize lists to store PERMANOVA results and plots
+list_permanova_NEC_meta <- list()
+myplots_PCA <- list()
+
+# Loop over levels of TP (Treatment Phase)
+for (i in levels.TP) {
+  
+  # Filter data for each treatment phase
+  FB_NEC.match_combine_filter <- FB_NEC_match_meta_combined %>%
+    filter(TP_meta.match == i)
+  
+  # Prepare the HMDB metabolomics data
+  FB_HMDB_NEC.meta.all_filter <- FB_HMDB.combined.Quantile_all %>%
+    left_join(FB_NEC_final %>% select(ID.seq, Group.NEC.ID)) %>%
+    filter(ID.seq %in% FB_NEC.match_combine_filter$ID.seq & Group.NEC.ID != "NEC?")
+  
+  # Prepare data for PCA
+  FB_HMDB_NEC.meta.all_filter_PCA.table <- FB_HMDB_NEC.meta.all_filter %>%
+    select(-Group.NEC.ID) %>%
+    column_to_rownames("ID.seq")
+  
+  FB_HMDB_NEC.meta.all_filter_Group.NEC <- FB_HMDB_NEC.meta.all_filter %>%
+    select(ID.seq, Group.NEC.ID)
+  
+  # Compute Euclidean distance and perform PCA
+  dist_NEC <- vegdist(FB_HMDB_NEC.meta.all_filter_PCA.table, method = "euclidean")
+  pca <- cmdscale(dist_NEC, eig = TRUE)
+  
+  # Extract the first two PCs and bind with Group.NEC.ID
+  pca2 <- cbind(as.data.frame(pca$points)[, 1:2] / 100, FB_HMDB_NEC.meta.all_filter_Group.NEC$Group.NEC.ID)
+  colnames(pca2) <- c("PC1", "PC2", "Group.NEC.ID")
+  
+  # Calculate variance explained by the first two PCs
+  explainedvar1 <- round(pca$eig[1] / sum(pca$eig), 4) * 100
+  explainedvar2 <- round(pca$eig[2] / sum(pca$eig), 4) * 100
+  xlab_Group.NEC.ID <- paste("PC 1 (", explainedvar1, "%)", sep = "")
+  ylab_Group.NEC.ID <- paste("PC 2 (", explainedvar2, "%)", sep = "")
+  
+  # Join PCA results with metadata
+  pca_Group.NEC.ID <- pca2 %>%
+    rownames_to_column("ID.seq") %>%
+    left_join(FB_NEC_final)
+  
+  # PERMANOVA test for differences between groups based on Euclidean distances
+  list_permanova_NEC_meta[[i]] <- data.frame(adonis2(dist_NEC ~ Group.NEC.ID,
+                                                      data = pca_Group.NEC.ID,
+                                                      permutations = 20000))
+  
+  # PCA plot
+  PCA.meta_NEC.match_euclidean <- ggplot(pca_Group.NEC.ID, aes(x = PC1, y = PC2, fill = Group.NEC.ID, color = Group.NEC.ID)) +
+    geom_point(alpha = 0.7, size = 2) +
+    stat_ellipse(geom = "polygon", alpha = 0.05) +
+    stat_ellipse() +
+    ggtitle(i) +
+    xlab(xlab_Group.NEC.ID) +
+    ylab(ylab_Group.NEC.ID) +
+    theme_classic() +
+    theme(legend.position = "none", aspect.ratio = 1) +
+    scale_color_manual(values = Color_Group.NEC) +
+    scale_fill_manual(values = Color_Group.NEC)
+  
+  myplots_PCA[[i]] <- PCA.meta_NEC.match_euclidean
+}
+
+# Combine and save PCA plots
+plot_a_list(myplots_PCA, 1, 6)
+ggsave("PCoA.meta_NEC_T.match_euclidean.pdf", width = 14, height = 3)
+
+# Prepare PERMANOVA table
+table.permanova_meta_NEC.T <- data.frame(levels.TP) %>%
+  rename(Factor = levels.TP) %>%
+  mutate(p = NA, R2 = NA)
+
+# Extract p-values and R-squared values for PERMANOVA
+for (i in 1:length(levels.TP)) {
+  table.permanova_meta_NEC.T$p[i] <- list_permanova_NEC_meta[[i]][1, 5]
+  table.permanova_meta_NEC.T$R2[i] <- list_permanova_NEC_meta[[i]][1, 3]
+}
+
+# Final table with analysis details
+table.permanova_meta_NEC.T <- table.permanova_meta_NEC.T %>%
+  mutate(Analysis = "metabolome", Group = "confirmed NEC vs. Control", Distance = "Euclidean")
+write_xlsx(table.permanova_meta_NEC.T, "table.permanova_meta_NEC.T.xlsx")
