@@ -1,7 +1,7 @@
 # This section of the code performs differential expression analysis (DEGs) and gene set enrichment analysis (GSEA) for a subset of samples from the "NEC_P8" group and its comparison to "Control_P8".
 # It loops through different "Type" categories, performs differential expression analysis for each, and applies GSEA for hallmark, GO biological processes, AhR, and immune pathways.
 # The results are saved as Excel files and visualized in volcano plots and bar plots.
-#  This method is also applied to other group-wise comparisons.
+# This method is also applied to other group-wise comparisons (of mouse and human datasets).
 
 # Load necessary libraries
 library(Seurat)
@@ -20,9 +20,9 @@ List_Type_gsea_GOBP_result_NEC_P8_subset <- list()
 List_Type_gsea_AhR_result_NEC_P8_subset <- list()
 
 # Perform DEG analysis and GSEA for each Type
-for (i in unique(merged_NEC_SP$Type)) {
+for (i in unique(merged_NEC_AhR$Type)) {
   # Subset data for each Type
-  scRNA_NEC_P8_subset <- subset(x = merged_NEC_SP, Type == i)
+  scRNA_NEC_P8_subset <- subset(x = merged_NEC_AhR, Type == i)
   Idents(scRNA_NEC_P8_subset) <- "Group"
   
   # Differential expression analysis between NEC_P8 and Control_P8
