@@ -1,0 +1,70 @@
+# Purpose: This section performs Principal Component Analysis (PCA) to visualize the clustering of samples based on gene expression.
+
+# Load essential packages
+library(dplyr)               # For data manipulation
+library(tidyr)               # For tidying data
+library(readr)               # For reading and writing CSV/TSV files
+library(readxl)              # For reading Excel files
+library(DESeq2)              # For differential expression analysis
+library(ggplot2)             # For data visualization
+library(ggpubr)              # For adding statistical comparisons in plots
+library(EnhancedVolcano)     # For creating volcano plots
+library(purrr)               # For functional programming tools
+library(tibble)              # For tibble data frames
+library(ggrepel)             # For labeling in plots (e.g., in volcano plot)
+library(org.Mm.eg.db)        # For gene annotation (mouse)
+library(clusterProfiler)     # For GSEA
+library(GSVA)                # For Gene Set Variation Analysis
+library(pheatmap)            # For heatmaps
+
+
+# Prepare the matrix for PCA and select the relevant columns for analysis
+Group_RNAseq_Macrophage_Fibrolast_AhR_Groups <- Group_RNAseq_Macrophage_Fibrolast_AhR %>%
+  filter(Sample %in% colnames(Matrix_RNAseq_AhR_Macrophage))
+
+Matrix_count_Gene_animal_AhR <- Matrix_raw_RNAseq_AhR_Fibroblast %>%
+  column_to_rownames("gene") %>%
+  as.matrix()
+
+# Create DESeq2 dataset
+DESeq_select.Group <- DESeqDataSetFromMatrix(countData = round(Matrix_count_Gene_animal_AhR),
+  colData = Group_RNAseq_Macrophage_Fibrolast_AhR_Groups, ~ Group)
+DESeq_select.Group_result <- DESeq(DESeq_select.Group)
+
+# Create DESeq table with tidy results
+DESeq.table_mouse_NEC_Macrophage_Fibrolast_AhR <- results(DESeq_select.Group_result, tidy = TRUE) %>%
+  rename(gene_id = row) %>%
+  filter(!is.na(padj)) %>%
+  left_join(gene_id_name) %>%
+  distinct(Gene_name, .keep_all = TRUE) %>%
+  arrange(pvalue) %>%
+  filter(!is.na(Gene_name))
+
+# Variance stabilizing transformation (vst)
+vsdata_all <- vst(DESeq_select.Group_result, blind = FALSE)
+
+# Matrix transformation for PCA
+matrix_vsdata_mouse_AhR_combined <- assay(vsdata_all) %>%
+  as.data.frame() %>%
+  t() %>%
+  as.matrix()
+
+# Perform PCA analysis
+sample_pca_mouse_AhR_combined <- prcomp(matrix_vsdata_mouse_AhR_combined[, DESeq.table_mouse_NEC_Macrophage_Fibrolast_AhR$gene_id])
+
+# Extract PCA scores and merge with group information
+pc_scores_mouse_AhR_combined <- sample_pca_mouse_AhR_combined$x %>%
+  as_tibble(rownames = "Sample") %>%
+  left_join(Group_RNAseq_Macrophage_Fibrolast_AhR_Groups)
+
+# Visualize PCA results using ggplot2
+PCA_mouse_NEC_Macrophage_Fibrolast_AhR <- ggscatter(pc_scores_mouse_AhR_combined,
+         x = "PC1", y = "PC2", color = "Group_tissue", 
+         size = 3, alpha = 0.7, stroke = 0.8, ggtheme = theme_classic()) +
+  coord_cartesian() +
+  theme(aspect.ratio = 1, 
+        legend.title = element_text(face = "bold"), 
+        axis.title = element_text(face = "bold"))
+
+# Save PCA plot
+ggsave("PCA_mouse_NEC_Macrophage_Fibrolast_AhR.pdf", width = 4.5, height = 2.7)
