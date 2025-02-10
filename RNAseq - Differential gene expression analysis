@@ -1,0 +1,67 @@
+# Load essential packages
+library(dplyr)               # For data manipulation
+library(tidyr)               # For tidying data
+library(readr)               # For reading and writing CSV/TSV files
+library(readxl)              # For reading Excel files
+library(DESeq2)              # For differential expression analysis
+library(ggplot2)             # For data visualization
+library(ggpubr)              # For adding statistical comparisons in plots
+library(EnhancedVolcano)     # For creating volcano plots
+# Data preparation
+Group_RNAseq_Macrophage_Fibrolast_AhR_groups <- Group_RNAseq_Macrophage_Fibrolast_AhR %>%
+  filter(Sample %in% colnames(Matrix_RNAseq_AhR_Macrophage))
+
+Group_RNAseq_Macrophage_Fibrolast_AhR_groups_NEC <- Group_RNAseq_Macrophage_Fibrolast_AhR_groups %>%
+  filter(Group %in% c("Control_Fibroblast", "Control"))
+
+Matrix_count_Gene_animal_AhR_NEC_Fibroblast <- Matrix_raw_RNAseq_AhR_Fibroblast[, c("gene", Group_RNAseq_Macrophage_Fibrolast_AhR_groups_NEC$Sample)] %>%
+  column_to_rownames("gene") %>% as.matrix()
+
+# DESeq2 analysis for control fibroblasts
+DESeq_mouse_AhR_NEC <- DESeqDataSetFromMatrix(countData = round(Matrix_count_Gene_animal_AhR_NEC_Fibroblast),
+                              colData = Group_RNAseq_Macrophage_Fibrolast_AhR_groups_NEC, ~ Group)
+
+DESeq_result_mouse_AhR_NEC <- DESeq(DESeq_mouse_AhR_NEC)
+res <- results(DESeq_result_mouse_AhR_NEC)
+
+# Create DESeq table and save results
+DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast <- results(DESeq_result_mouse_AhR_NEC, tidy = TRUE) %>%
+  rename(gene_id = row) %>%
+  filter(!is.na(padj)) %>%
+  left_join(gene_id_name) %>%
+  distinct(Gene_name, .keep_all = TRUE) %>%
+  arrange(pvalue) %>%
+  filter(!is.na(Gene_name))
+
+write_xlsx(DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast, "DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast.xlsx")
+
+# MA plot and dispersion plot
+plotMA(res, ylim = c(-3, 3))
+plotDispEsts(DESeq_result_mouse_AhR_NEC, ylim = c(1e-6, 1e1))
+
+# PCA visualization for DESeq2 results
+vsdata <- vst(DESeq_result_mouse_AhR_NEC, blind = FALSE)
+plotPCA(vsdata, intgroup = "Group")
+
+# Volcano plot preparation
+DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast$pvalue_log <- -log10(DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast$pvalue)
+DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast$padj_log <- -log10(DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast$padj)
+
+# Volcano plot visualization
+Volcano_AhR_NEC_Fibroblast <- DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast %>%
+  mutate(Color = ifelse(log2FoldChange < (-1), "Blue4", "Gray"),
+         Color = replace(Color, log2FoldChange > 1, "Red4"),
+         Color = replace(Color, padj > 0.1, NA)) %>%
+  ggplot(aes(log2FoldChange, padj_log, label = Gene_name, color = Color)) +
+  geom_point(size = 0.8, aes(alpha = rev(padj_log))) +
+  geom_vline(xintercept = (-1), linetype = "dotted") +
+  geom_vline(xintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 0.1, linetype = "dotted") +
+  geom_text_repel(size = 2, hjust = 0, nudge_x = 0.01, max.overlaps = 20) +
+  ylab("adjusted P-value (-log10)") +
+  theme_classic() +
+  theme(legend.position = "none") +
+  ggtitle("Differential Genes (Control_Fibroblast vs. Control)")
+
+# Save Volcano plot
+ggsave("Volcano_AhR_NEC_Macrophage_Control_Fibroblast.pdf", width = 8, height = 10)
