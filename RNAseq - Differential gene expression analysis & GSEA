@@ -7,6 +7,9 @@ library(DESeq2)              # For differential expression analysis
 library(ggplot2)             # For data visualization
 library(ggpubr)              # For adding statistical comparisons in plots
 library(EnhancedVolcano)     # For creating volcano plots
+library(org.Mm.eg.db)        # For gene annotation (mouse)
+library(clusterProfiler)     # For GSEA
+
 # Data preparation
 Group_RNAseq_Macrophage_Fibrolast_AhR_groups <- Group_RNAseq_Macrophage_Fibrolast_AhR %>%
   filter(Sample %in% colnames(Matrix_RNAseq_AhR_Macrophage))
@@ -65,3 +68,64 @@ Volcano_AhR_NEC_Fibroblast <- DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibro
 
 # Save Volcano plot
 ggsave("Volcano_AhR_NEC_Macrophage_Control_Fibroblast.pdf", width = 8, height = 10)
+
+
+
+### Gene set enrichment analysis
+
+# Expression stats preparation
+NEC_mapped_df <- data.frame(
+  gene_symbol = mapIds(
+    org.Mm.eg.db, # Annotation package for the mouse
+    keys = DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast$gene_id,
+    keytype = "ENSEMBL", column = "SYMBOL", multiVals = "first"
+  )) %>%
+  filter(!is.na(gene_symbol)) %>%
+  tibble::rownames_to_column("ENSEMBL") %>%
+  inner_join(DESeq.table_mouse_AhR_NEC_Macrophage_Control_Fibroblast, by = c("ENSEMBL" = "gene_id"))
+
+# Filter duplicates (if any)
+filtered_Control_Fibroblast_mio_mapped_df <- NEC_mapped_df %>%
+  arrange(desc(abs(log2FoldChange))) %>%
+  distinct(gene_symbol, .keep_all = TRUE)
+
+# GSEA Analysis for Hallmark Pathways
+lfc_vector <- filtered_Control_Fibroblast_mio_mapped_df$log2FoldChange
+names(lfc_vector) <- filtered_Control_Fibroblast_mio_mapped_df$gene_symbol
+lfc_vector <- sort(lfc_vector, decreasing = TRUE)
+
+# Perform GSEA for Hallmark pathways
+gsea_results_hallmark_Macrophage_Control_Fibroblast_raw <- GSEA(
+    geneList = lfc_vector,
+    minGSSize = 10,
+    maxGSSize = 1000,
+    pvalueCutoff = 1,
+    seed = TRUE,
+    pAdjustMethod = "fdr",
+    TERM2GENE = select(mm_hallmark_sets, gs_name, gene_symbol)
+)
+
+gsea_result_hallmark_Macrophage_Control_Fibroblast <- data.frame(gsea_results_hallmark_Macrophage_Control_Fibroblast_raw@result) %>%
+  mutate(Pathway = ID, Pathway = gsub("epithelial_", "", Pathway))
+
+write_xlsx(gsea_result_hallmark_Macrophage_Control_Fibroblast, "gsea_result_hallmark_Macrophage_Control_Fibroblast.xlsx")
+
+# Bar plot for Hallmark GSEA results
+barplot_gsea_result_hallmark_Macrophage_Control_Fibroblast <- gsea_result_hallmark_Macrophage_Control_Fibroblast %>%
+  mutate(Pathway_lower = tolower(Pathway),
+         Pathway_lower = gsub("_", " ", Pathway_lower),
+         Pathway_lower = capitalize(Pathway_lower)) %>%
+  filter(!is.na(NES)) %>%
+  filter(pvalue < 0.05) %>%
+  arrange(NES) %>%
+  mutate(Color = if_else(NES > 0, "red4", "#265A70")) %>%
+  ggplot(aes(reorder(Pathway_lower, NES), NES)) +
+  geom_bar(aes(fill = Color), stat = "identity") +
+  scale_fill_manual(values = c("red4" = "red4", "#265A70" = "#265A70")) +
+  theme_classic() +
+  theme(legend.position = "none", axis.title.x = element_text(color = "black"),
+        axis.text.y = element_text(color = "black"), axis.title.y = element_blank()) +
+  coord_flip()
+
+# Save Hallmark GSEA bar plot
+ggsave("barplot_gsea_result_hallmark_Macrophage_Control_Fibroblast.pdf", width = 6, height = 5)
