@@ -57,7 +57,7 @@ merged_NEC_AhR <- merge(x = scRNA_list$NEC_P8,
                                  scRNA_list$NEC_Indole_1, scRNA_list$NEC_Indole_2, scRNA_list$NEC_Kyn_1))
 
 # Integration using SCTransform (Seurat v5) with regression of confounding variables
-merged_NEC_AhR <- SCTransform(merged_NEC_AhR, method = "glmGamPoi", vars.to.regress = c("percent.mt", 'nFeature_RNA', 'nCount_RNA'), verbose = FALSE)
+merged_NEC_AhR <- SCTransform(merged_NEC_AhR, method = "glmGamPoi", ncells = 10000, vars.to.regress = c("percent.mt", 'nFeature_RNA', 'nCount_RNA'), verbose = FALSE)
 
 # Apply Cell Cycle Scoring
 merged_NEC_AhR <- CellCycleScoring(object = merged_NEC_AhR, s.features = s.genes, g2m.features = g2m.genes, 
